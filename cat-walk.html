@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>猫が歩く</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #87ceeb; overflow: hidden; font-family: monospace; }
+  canvas { display: block; }
+  #controls {
+    position: fixed; bottom: 20px; right: 20px;
+    display: flex; gap: 8px; flex-direction: column; align-items: flex-end;
+  }
+  #controls button {
+    background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #fff;
+    padding: 6px 14px; cursor: pointer; border-radius: 4px; font-size: 13px;
+  }
+  #controls button:hover { background: rgba(255,255,255,0.2); }
+  #info {
+    position: fixed; top: 10px; left: 10px;
+    color: #333; font-size: 13px; background: rgba(255,255,255,0.6);
+    padding: 6px 10px; border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="controls">
+  <button id="btnColor">毛色を変える</button>
+  <button id="btnSpeed">速さを変える</button>
+  <button id="btnTime">昼夜切り替え</button>
+</div>
+<div id="info">クリックで猫を増やす / ダブルクリックで削除</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W = window.innerWidth, H = window.innerHeight;
+canvas.width = W; canvas.height = H;
+
+window.addEventListener('resize', () => {
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W; canvas.height = H;
+  buildScene();
+});
+
+// Scene
+const ROAD_Y = H * 0.65;
+const ROAD_H = H * 0.22;
+let isNight = false;
+
+// Cat colors
+const catColors = [
+  { body: '#e8c99a', belly: '#f5e6c8', nose: '#ffaaaa', eye: '#2d8a2d' },
+  { body: '#555', belly: '#888', nose: '#ffaaaa', eye: '#ffaa00' },
+  { body: '#cc8844', belly: '#f0c890', nose: '#ff9999', eye: '#3399ff' },
+  { body: '#fff', belly: '#f0f0f0', nose: '#ffcccc', eye: '#88cc44' },
+  { body: '#1a1a1a', belly: '#333', nose: '#ff8888', eye: '#ff6600' },
+];
+let colorIdx = 0;
+let speedLevel = 1;
+const speeds = [1, 2, 3, 0.4];
+const speedLabels = ['普通', '速い', '爆速', 'のんびり'];
+
+// Buildings (background)
+let buildings = [];
+let clouds = [];
+let cars = [];
+let cats = [];
+
+function randInt(a, b) { return Math.floor(Math.random() * (b - a + 1)) + a; }
+function rand(a, b) { return Math.random() * (b - a) + a; }
+
+function buildScene() {
+  buildings = [];
+  for (let x = -80; x < W + 80; x += randInt(60, 120)) {
+    buildings.push({
+      x, w: randInt(55, 110),
+      h: randInt(80, H * 0.45),
+      color: `hsl(${randInt(200,240)},${randInt(15,35)}%,${randInt(35,55)}%)`,
+      windows: []
+    });
+  }
+  for (const b of buildings) {
+    for (let wy = b.y || ROAD_Y - b.h + 12; wy < ROAD_Y - 10; wy += 22) {
+      for (let wx = b.x + 8; wx < b.x + b.w - 16; wx += 18) {
+        b.windows.push({ x: wx, y: wy, lit: Math.random() > 0.4 });
+      }
+    }
+  }
+
+  clouds = [];
+  for (let i = 0; i < 6; i++) {
+    clouds.push({ x: rand(0, W), y: rand(40, 200), w: rand(80, 160), speed: rand(0.1, 0.4) });
+  }
+
+  cars = [];
+  for (let i = 0; i < 3; i++) {
+    spawnCar();
+  }
+}
+
+function spawnCar() {
+  const dir = Math.random() > 0.5 ? 1 : -1;
+  cars.push({
+    x: dir === 1 ? -120 : W + 120,
+    y: ROAD_Y + ROAD_H * rand(0.25, 0.65),
+    w: randInt(70, 110), h: randInt(30, 40),
+    dir,
+    speed: rand(2, 5),
+    color: `hsl(${randInt(0,360)},70%,50%)`,
+    wheelR: 8
+  });
+}
+
+function spawnCat(x, color) {
+  cats.push({
+    x: x ?? rand(50, W - 50),
+    y: ROAD_Y + ROAD_H * 0.5,
+    dir: Math.random() > 0.5 ? 1 : -1,
+    speed: rand(0.6, 1.4) * speeds[speedLevel],
+    anim: rand(0, Math.PI * 2),
+    color: color ?? catColors[colorIdx],
+    scale: rand(0.8, 1.2),
+    tail: 0,
+    blinkTimer: rand(0, 100),
+    blinking: false,
+  });
+}
+
+buildScene();
+// Start with 1 cat
+spawnCat(W / 2, catColors[0]);
+
+// Controls
+document.getElementById('btnColor').addEventListener('click', () => {
+  colorIdx = (colorIdx + 1) % catColors.length;
+  cats.forEach(c => c.color = catColors[colorIdx]);
+});
+document.getElementById('btnSpeed').addEventListener('click', () => {
+  speedLevel = (speedLevel + 1) % speeds.length;
+  document.getElementById('btnSpeed').textContent = `速さ: ${speedLabels[speedLevel]}`;
+  cats.forEach(c => { c.speed = rand(0.6, 1.4) * speeds[speedLevel]; });
+});
+document.getElementById('btnTime').addEventListener('click', () => { isNight = !isNight; });
+
+canvas.addEventListener('click', e => {
+  spawnCat(e.clientX, catColors[colorIdx]);
+});
+canvas.addEventListener('dblclick', e => {
+  // Remove nearest cat
+  if (cats.length <= 1) return;
+  let minDist = Infinity, minIdx = -1;
+  cats.forEach((c, i) => {
+    const d = Math.hypot(c.x - e.clientX, c.y - e.clientY);
+    if (d < minDist) { minDist = d; minIdx = i; }
+  });
+  if (minIdx >= 0) cats.splice(minIdx, 1);
+});
+
+// Draw functions
+function drawSky() {
+  const sky = isNight
+    ? ctx.createLinearGradient(0, 0, 0, ROAD_Y)
+    : ctx.createLinearGradient(0, 0, 0, ROAD_Y);
+  if (isNight) {
+    sky.addColorStop(0, '#0a0a2a');
+    sky.addColorStop(1, '#1a1a4a');
+  } else {
+    sky.addColorStop(0, '#4fc3f7');
+    sky.addColorStop(1, '#b3e5fc');
+  }
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, ROAD_Y);
+}
+
+function drawStars() {
+  if (!isNight) return;
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  for (let i = 0; i < 80; i++) {
+    const sx = (i * 137.5) % W;
+    const sy = (i * 79.3) % (ROAD_Y * 0.8);
+    const r = i % 3 === 0 ? 1.5 : 0.8;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Moon
+  ctx.fillStyle = '#fffde7';
+  ctx.beginPath(); ctx.arc(W - 80, 60, 28, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = isNight ? '#1a1a4a' : '#4fc3f7';
+  ctx.beginPath(); ctx.arc(W - 68, 54, 24, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawSun() {
+  if (isNight) return;
+  ctx.fillStyle = '#ffe082';
+  ctx.beginPath(); ctx.arc(80, 70, 36, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#ffca28'; ctx.lineWidth = 3;
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(80 + Math.cos(angle) * 42, 70 + Math.sin(angle) * 42);
+    ctx.lineTo(80 + Math.cos(angle) * 54, 70 + Math.sin(angle) * 54);
+    ctx.stroke();
+  }
+}
+
+function drawClouds() {
+  if (isNight) return;
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  for (const cl of clouds) {
+    ctx.beginPath();
+    ctx.ellipse(cl.x, cl.y, cl.w/2, cl.w/5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cl.x - cl.w/4, cl.y + 5, cl.w/4, cl.w/6, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cl.x + cl.w/4, cl.y + 5, cl.w/3.5, cl.w/6, 0, 0, Math.PI*2); ctx.fill();
+  }
+}
+
+function drawBuildings() {
+  for (const b of buildings) {
+    const bTop = ROAD_Y - b.h;
+    ctx.fillStyle = isNight
+      ? `hsl(220,20%,${15 + parseInt(b.color.match(/\d+%/g)?.[2] ?? '40') / 5}%)`
+      : b.color;
+    ctx.fillRect(b.x, bTop, b.w, b.h);
+
+    for (const w of b.windows) {
+      const wy = w.y - (b.h - (ROAD_Y - bTop));
+      if (wy < bTop || wy > ROAD_Y - 4) continue;
+      if (isNight && w.lit) {
+        ctx.fillStyle = `rgba(255,230,120,${rand(0.6, 1)})`;
+      } else if (!isNight) {
+        ctx.fillStyle = 'rgba(180,220,255,0.7)';
+      } else {
+        ctx.fillStyle = 'rgba(30,30,60,0.8)';
+      }
+      ctx.fillRect(w.x, wy, 10, 12);
+    }
+  }
+}
+
+function drawRoad() {
+  // Road surface
+  const rg = ctx.createLinearGradient(0, ROAD_Y, 0, ROAD_Y + ROAD_H);
+  rg.addColorStop(0, isNight ? '#1c1c1c' : '#555');
+  rg.addColorStop(1, isNight ? '#111' : '#444');
+  ctx.fillStyle = rg;
+  ctx.fillRect(0, ROAD_Y, W, ROAD_H);
+
+  // Sidewalk
+  ctx.fillStyle = isNight ? '#2a2a2a' : '#999';
+  ctx.fillRect(0, ROAD_Y, W, ROAD_H * 0.12);
+  ctx.fillStyle = isNight ? '#222' : '#888';
+  ctx.fillRect(0, ROAD_Y + ROAD_H * 0.88, W, ROAD_H * 0.12);
+
+  // Lane markings
+  ctx.strokeStyle = isNight ? '#555' : '#aaa';
+  ctx.lineWidth = 3;
+  ctx.setLineDash([40, 30]);
+  ctx.beginPath();
+  ctx.moveTo(0, ROAD_Y + ROAD_H * 0.5);
+  ctx.lineTo(W, ROAD_Y + ROAD_H * 0.5);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Road glow at night
+  if (isNight) {
+    const glow = ctx.createLinearGradient(0, ROAD_Y, 0, ROAD_Y + ROAD_H);
+    glow.addColorStop(0, 'rgba(255,150,0,0.05)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, ROAD_Y, W, ROAD_H);
+  }
+}
+
+function drawCar(car) {
+  ctx.save();
+  ctx.translate(car.x, car.y - car.h);
+  if (car.dir === -1) ctx.scale(-1, 1);
+
+  // Body
+  ctx.fillStyle = car.color;
+  ctx.beginPath();
+  ctx.roundRect(0, 0, car.w, car.h, 6);
+  ctx.fill();
+
+  // Roof
+  ctx.fillStyle = car.color;
+  ctx.beginPath();
+  ctx.roundRect(car.w * 0.2, -car.h * 0.7, car.w * 0.55, car.h * 0.75, 5);
+  ctx.fill();
+
+  // Windows
+  ctx.fillStyle = isNight ? '#1a2a4a' : '#aee';
+  ctx.beginPath();
+  ctx.roundRect(car.w * 0.22, -car.h * 0.65, car.w * 0.22, car.h * 0.6, 3);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.roundRect(car.w * 0.48, -car.h * 0.65, car.w * 0.22, car.h * 0.6, 3);
+  ctx.fill();
+
+  // Wheels
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.arc(car.w * 0.2, car.h + 2, car.wheelR, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(car.w * 0.8, car.h + 2, car.wheelR, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#555';
+  ctx.beginPath(); ctx.arc(car.w * 0.2, car.h + 2, car.wheelR * 0.5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(car.w * 0.8, car.h + 2, car.wheelR * 0.5, 0, Math.PI*2); ctx.fill();
+
+  // Headlights
+  if (isNight) {
+    ctx.fillStyle = '#fffde0';
+    ctx.beginPath(); ctx.ellipse(car.w - 4, car.h * 0.3, 5, 4, 0, 0, Math.PI*2); ctx.fill();
+    // Light beam
+    ctx.save();
+    const beam = ctx.createLinearGradient(car.w, 0, car.w + 120, 0);
+    beam.addColorStop(0, 'rgba(255,250,180,0.3)');
+    beam.addColorStop(1, 'rgba(255,250,180,0)');
+    ctx.fillStyle = beam;
+    ctx.beginPath();
+    ctx.moveTo(car.w, car.h * 0.2);
+    ctx.lineTo(car.w + 120, -car.h * 0.5);
+    ctx.lineTo(car.w + 120, car.h * 0.8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    // Tail lights
+    ctx.fillStyle = '#ff2200';
+    ctx.beginPath(); ctx.ellipse(4, car.h * 0.3, 4, 3, 0, 0, Math.PI*2); ctx.fill();
+  } else {
+    ctx.fillStyle = '#ffe';
+    ctx.beginPath(); ctx.ellipse(car.w - 4, car.h * 0.3, 5, 4, 0, 0, Math.PI*2); ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function drawCat(cat, t) {
+  const { x, y, dir, anim, color, scale, blinking } = cat;
+  const s = scale * 0.9;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(dir * s, s);
+
+  const legSwing = Math.sin(anim) * 10;
+  const bodyBob = Math.abs(Math.sin(anim)) * 3;
+  const tailWag = Math.sin(anim * 0.7) * 20;
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  ctx.beginPath();
+  ctx.ellipse(0, 28 + bodyBob, 28, 8, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Tail
+  ctx.strokeStyle = color.body;
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-18, 10 + bodyBob);
+  ctx.quadraticCurveTo(-40 + tailWag * 0.3, -10 + bodyBob, -30 + tailWag, -30 + bodyBob);
+  ctx.stroke();
+
+  // Back legs
+  ctx.fillStyle = color.body;
+  ctx.save();
+  ctx.translate(-12, 15 + bodyBob);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 5, 12, -0.2 - legSwing * 0.03, 0, Math.PI*2); ctx.fill();
+  ctx.fillRect(-5, 10, 12, 4); // paw
+  ctx.restore();
+
+  // Body
+  ctx.fillStyle = color.body;
+  ctx.beginPath();
+  ctx.ellipse(0, 5 + bodyBob, 22, 14, 0.1, 0, Math.PI*2);
+  ctx.fill();
+
+  // Belly
+  ctx.fillStyle = color.belly;
+  ctx.beginPath();
+  ctx.ellipse(4, 8 + bodyBob, 14, 9, 0.1, 0, Math.PI*2);
+  ctx.fill();
+
+  // Front legs
+  ctx.fillStyle = color.body;
+  ctx.save();
+  ctx.translate(10, 14 + bodyBob);
+  ctx.beginPath();
+  ctx.ellipse(legSwing * 0.5, 0, 5, 11, 0.1 + legSwing * 0.03, 0, Math.PI*2); ctx.fill();
+  ctx.fillRect(legSwing * 0.5 - 5, 9, 12, 4);
+  ctx.restore();
+
+  // Head
+  ctx.fillStyle = color.body;
+  ctx.beginPath();
+  ctx.ellipse(18, -4 + bodyBob, 16, 14, -0.1, 0, Math.PI*2);
+  ctx.fill();
+
+  // Ears
+  ctx.beginPath();
+  ctx.moveTo(10, -12 + bodyBob); ctx.lineTo(14, -24 + bodyBob); ctx.lineTo(20, -14 + bodyBob);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(22, -14 + bodyBob); ctx.lineTo(28, -26 + bodyBob); ctx.lineTo(32, -14 + bodyBob);
+  ctx.fill();
+  ctx.fillStyle = '#ffaaaa';
+  ctx.beginPath();
+  ctx.moveTo(12, -13 + bodyBob); ctx.lineTo(15, -20 + bodyBob); ctx.lineTo(19, -14 + bodyBob);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(24, -14 + bodyBob); ctx.lineTo(27, -22 + bodyBob); ctx.lineTo(30, -14 + bodyBob);
+  ctx.fill();
+
+  // Eyes
+  if (blinking) {
+    ctx.strokeStyle = '#333'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(13, -5 + bodyBob); ctx.lineTo(17, -5 + bodyBob); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(22, -5 + bodyBob); ctx.lineTo(26, -5 + bodyBob); ctx.stroke();
+  } else {
+    ctx.fillStyle = color.eye;
+    ctx.beginPath(); ctx.ellipse(15, -6 + bodyBob, 3.5, 4, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(24, -6 + bodyBob, 3.5, 4, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#111';
+    if (isNight) {
+      ctx.beginPath(); ctx.ellipse(15, -6 + bodyBob, 2.5, 3.5, 0, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(24, -6 + bodyBob, 2.5, 3.5, 0, 0, Math.PI*2); ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.ellipse(15, -6 + bodyBob, 1.2, 3.5, 0, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(24, -6 + bodyBob, 1.2, 3.5, 0, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(14, -7 + bodyBob, 1, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(23, -7 + bodyBob, 1, 0, Math.PI*2); ctx.fill();
+  }
+
+  // Nose & mouth
+  ctx.fillStyle = color.nose;
+  ctx.beginPath(); ctx.ellipse(19, -1 + bodyBob, 3, 2, 0, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#aa5555'; ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(19, 1 + bodyBob); ctx.quadraticCurveTo(15, 4 + bodyBob, 14, 3 + bodyBob); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(19, 1 + bodyBob); ctx.quadraticCurveTo(23, 4 + bodyBob, 24, 3 + bodyBob); ctx.stroke();
+
+  // Whiskers
+  ctx.strokeStyle = isNight ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.3)';
+  ctx.lineWidth = 0.8;
+  for (const wy of [-2, 0, 2]) {
+    ctx.beginPath(); ctx.moveTo(10, wy + bodyBob); ctx.lineTo(-6, wy - 1 + bodyBob); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(28, wy + bodyBob); ctx.lineTo(44, wy - 1 + bodyBob); ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+let lastTime = 0;
+
+function loop(t) {
+  const dt = Math.min(t - lastTime, 50);
+  lastTime = t;
+
+  // Update clouds
+  for (const cl of clouds) {
+    cl.x += cl.speed;
+    if (cl.x - cl.w/2 > W + 50) cl.x = -cl.w/2 - 50;
+  }
+
+  // Update cars
+  for (const car of cars) {
+    car.x += car.dir * car.speed;
+    if (car.dir === 1 && car.x - car.w > W + 50) car.x = -car.w - 10;
+    if (car.dir === -1 && car.x + car.w < -50) car.x = W + car.w + 10;
+  }
+
+  // Update cats
+  const spd = speeds[speedLevel];
+  for (const cat of cats) {
+    cat.anim += 0.08 * (cat.speed / spd + 0.5);
+    cat.x += cat.dir * cat.speed;
+    if (cat.x > W + 60) { cat.x = -60; }
+    if (cat.x < -60) { cat.x = W + 60; }
+
+    // Blink
+    cat.blinkTimer++;
+    if (cat.blinkTimer > 120 + Math.random() * 80) {
+      cat.blinking = true;
+      cat.blinkTimer = 0;
+    }
+    if (cat.blinking && cat.blinkTimer > 6) cat.blinking = false;
+  }
+
+  // Draw
+  drawSky();
+  drawStars();
+  drawSun();
+  drawClouds();
+  drawBuildings();
+  drawRoad();
+
+  // Sort cats and cars by Y for depth
+  const entities = [
+    ...cars.map(c => ({ type: 'car', data: c, y: c.y })),
+    ...cats.map(c => ({ type: 'cat', data: c, y: c.y }))
+  ].sort((a, b) => a.y - b.y);
+
+  for (const e of entities) {
+    if (e.type === 'car') drawCar(e.data);
+    else drawCat(e.data, t);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
